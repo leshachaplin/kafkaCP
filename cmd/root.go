@@ -24,12 +24,12 @@ var rootCmd = &cobra.Command{
 		s := make(chan os.Signal)
 		signal.Notify(s, os.Interrupt)
 		done, cnsl := context.WithCancel(context.Background())
-		conn, err := kafka.DialLeader(context.Background(), "tcp", "localhost:9092", "time", 0)
+		conn, err := kafka.DialLeader(context.Background(), "tcp", "localhost:9092", "time1", 0)
 		if err != nil {
 			log.Fatalf("deadline not set")
 		}
 
-		conn2, err := kafka.DialLeader(context.Background(), "tcp", "localhost:9092", "role", 0)
+		conn2, err := kafka.DialLeader(context.Background(), "tcp", "localhost:9092", "role1", 0)
 		if err != nil {
 			log.Fatalf("deadline not set")
 		}
@@ -39,7 +39,7 @@ var rootCmd = &cobra.Command{
 
 		consT := kafka.NewReader(kafka.ReaderConfig{
 			Brokers:   []string{"localhost:9092"},
-			Topic:     "time",
+			Topic:     "time1",
 			GroupID:   fmt.Sprintf("%v", isWatcher),
 			Partition: 0,
 			MinBytes:  10e3, // 10KB
@@ -49,7 +49,7 @@ var rootCmd = &cobra.Command{
 
 		consR := kafka.NewReader(kafka.ReaderConfig{
 			Brokers:   []string{"localhost:9092"},
-			Topic:     "role",
+			Topic:     "role1",
 			GroupID:   fmt.Sprintf("%v", isWatcher),
 			Partition: 0,
 			MinBytes:  10e3, // 10KB
@@ -83,7 +83,7 @@ func Execute() error {
 func work(done context.Context, conn *kafka.Conn, conn2 *kafka.Conn, consT *kafka.Reader, consR *kafka.Reader) {
 	if !isWatcher {
 		t := time.NewTicker(time.Second * 3)
-		t2 := time.NewTicker(time.Second * 30)
+		t2 := time.NewTicker(time.Second * 10)
 
 		for {
 			select {
@@ -112,13 +112,14 @@ func work(done context.Context, conn *kafka.Conn, conn2 *kafka.Conn, consT *kafk
 			}
 		}
 	} else {
-		t := time.NewTicker(time.Second *5)
-		tick := time.NewTicker(time.Second)
+		t2 := time.NewTicker(time.Second *3)
+		tick := time.NewTicker(time.Second *5)
 		for {
 			select {
-			case <-t.C:
+			case <-t2.C:
 				{
-					m, err := consT.ReadMessage(context.Background())
+					ctx,_:= context.WithTimeout(context.Background(),time.Second)
+					m, err := consT.ReadMessage(ctx)
 
 					if err != nil {
 						log.Errorf("consumer doesnt work", err)
@@ -128,18 +129,20 @@ func work(done context.Context, conn *kafka.Conn, conn2 *kafka.Conn, consT *kafk
 				}
 			case <-tick.C:
 				{
-					m, err := consR.ReadMessage(context.Background())
+					ctx,_:= context.WithTimeout(context.Background(),time.Second)
+					m, err := consR.ReadMessage(ctx)
 					if err != nil {
 						log.Errorf("consumer doesnt work", err)
 					}
-					fmt.Println(string(m.Value))
+					_ =m
+					/*fmt.Println(string(m.Value))
 					if err == nil {
 						isWatcher = !isWatcher
 						fmt.Println("Swicth 2")
 						t.Stop()
 						tick.Stop()
 						return
-					}
+					}*/
 				}
 			}
 		}
