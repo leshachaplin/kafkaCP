@@ -3,12 +3,13 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"github.com/leshachaplin/kafkaCP/internal/consumer"
+	"github.com/leshachaplin/kafkaCP/internal/producer"
 	"github.com/segmentio/kafka-go"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"os"
 	"os/signal"
-	"time"
 )
 
 var (
@@ -24,45 +25,50 @@ var rootCmd = &cobra.Command{
 		s := make(chan os.Signal)
 		signal.Notify(s, os.Interrupt)
 		done, cnsl := context.WithCancel(context.Background())
-		conn, err := kafka.DialLeader(context.Background(), "tcp", "localhost:9092", "time1", 0)
+		connTime, err := kafka.DialLeader(context.Background(), "tcp", "localhost:9092", "time", 0)
 		if err != nil {
 			log.Fatalf("deadline not set")
 		}
 
-		conn2, err := kafka.DialLeader(context.Background(), "tcp", "localhost:9092", "role1", 0)
+		connRole, err := kafka.DialLeader(context.Background(), "tcp", "localhost:9092", "role", 0)
 		if err != nil {
 			log.Fatalf("deadline not set")
 		}
-		defer conn.Close()
-		defer conn2.Close()
+		defer connTime.Close()
+		defer connRole.Close()
 
+		produceTime := producer.New(connTime)
+		produceRole := producer.New(connRole)
 
-		consT := kafka.NewReader(kafka.ReaderConfig{
-			Brokers:   []string{"localhost:9092"},
-			Topic:     "time1",
-			GroupID:   fmt.Sprintf("%v", isWatcher),
-			Partition: 0,
-			MinBytes:  10e3, // 10KB
-			MaxBytes:  10e6, // 10MB
-		})
-		defer consT.Close()
+		//consT := kafka.NewReader(kafka.ReaderConfig{
+		//	Brokers:   []string{"localhost:9092"},
+		//	Topic:     "time1",
+		//	GroupID:   fmt.Sprintf("%v", isWatcher),
+		//	Partition: 0,
+		//	MinBytes:  10e3, // 10KB
+		//	MaxBytes:  10e6, // 10MB
+		//})
+		//defer consT.Close()
+		//
+		//consR := kafka.NewReader(kafka.ReaderConfig{
+		//	Brokers:   []string{"localhost:9092"},
+		//	Topic:     "role1",
+		//	GroupID:   fmt.Sprintf("%v", isWatcher),
+		//	Partition: 0,
+		//	MinBytes:  10e3, // 10KB
+		//	MaxBytes:  10e6, // 10MB
+		//})
 
-		consR := kafka.NewReader(kafka.ReaderConfig{
-			Brokers:   []string{"localhost:9092"},
-			Topic:     "role1",
-			GroupID:   fmt.Sprintf("%v", isWatcher),
-			Partition: 0,
-			MinBytes:  10e3, // 10KB
-			MaxBytes:  10e6, // 10MB
-		})
-
-		defer consR.Close()
-
+		//defer consR.Close()
+		consumerTime := consumer.New("time", fmt.Sprintf("%v", isWatcher))
+		consumerRole := consumer.New("role", fmt.Sprintf("%v", isWatcher))
+		defer consumer.Close(*consumerTime)
+		defer consumer.Close(*consumerRole)
 
 		go func() {
 
 			for {
-				work(done, conn, conn2, consT, consR)
+				work(done, produceTime, produceRole, consumerTime, consumerRole)
 			}
 		}()
 
@@ -80,71 +86,10 @@ func Execute() error {
 	return rootCmd.Execute()
 }
 
-func work(done context.Context, conn *kafka.Conn, conn2 *kafka.Conn, consT *kafka.Reader, consR *kafka.Reader) {
+func work(done context.Context, prodT *producer.Producer, prodR *producer.Producer, consT *consumer.Consumer, consR *consumer.Consumer) {
 	if !isWatcher {
-		t := time.NewTicker(time.Second * 3)
-		t2 := time.NewTicker(time.Second * 10)
-
-		for {
-			select {
-			case <-t.C:
-				{
-					i, err := conn.WriteMessages(kafka.Message{
-						Value: []byte(time.Now().String()),
-					})
-					if err != nil {
-						log.Errorf("consumer doesnt work code ",i, err)
-					}
-				}
-			case <-t2.C:
-				isWatcher = !isWatcher
-				fmt.Println("Swicth")
-				i, err := conn2.WriteMessages(kafka.Message{
-					Value: []byte("switch"),
-				})
-				time.Sleep(time.Second*5)
-				if err != nil {
-					log.Errorf("consumer doesnt work code ",i, err)
-				}
-				t.Stop()
-				t2.Stop()
-				return
-			}
-		}
+		prodT.Produce(done, prodR, &isWatcher)
 	} else {
-		t2 := time.NewTicker(time.Second *3)
-		tick := time.NewTicker(time.Second *5)
-		for {
-			select {
-			case <-t2.C:
-				{
-					ctx,_:= context.WithTimeout(context.Background(),time.Second)
-					m, err := consT.ReadMessage(ctx)
-
-					if err != nil {
-						log.Errorf("consumer doesnt work", err)
-						continue
-					}
-					fmt.Println(string(m.Value))
-				}
-			case <-tick.C:
-				{
-					ctx,_:= context.WithTimeout(context.Background(),time.Second)
-					m, err := consR.ReadMessage(ctx)
-					if err != nil {
-						log.Errorf("consumer doesnt work", err)
-					}
-					_ =m
-					/*fmt.Println(string(m.Value))
-					if err == nil {
-						isWatcher = !isWatcher
-						fmt.Println("Swicth 2")
-						t.Stop()
-						tick.Stop()
-						return
-					}*/
-				}
-			}
-		}
+		consT.Consume(done, consR, &isWatcher)
 	}
 }
